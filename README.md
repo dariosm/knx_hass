@@ -1,2 +1,2 @@
 # knx_hass
-Tools to integrate KNX setup files with Home Assistant configuration
+Tools to generate Home Assistant configuration files from KNX setup files (ETS) 
