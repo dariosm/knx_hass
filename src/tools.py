@@ -20,14 +20,23 @@ class ETSCustomAddressType(Enum):
     FEEDBACK_ONOFF = "feedback"
     DIMVALUE = "dimvalue"
     FEEDBACK_DIMVALUE = "feedback dimvalue"
-    DIMMER = "dimmer"
+    DIMMER_PUSH = "dimmer"
+
+
+class KNXHAProp(Enum):
+    """Types defined in an ETS exported file"""
+
+    ADDRESS = "address"
+    STATE_ADDRESS = "state_address"
+    BRIGHTNESS_ADDRESS = "brightness_address"
+    BRIGHTNAESS_STATE_ADDRESS = "brightness_state_address"
 
 
 ETS_HA_MAP = {
-    ETSCustomAddressType.ONOFF.value: "address",
-    ETSCustomAddressType.FEEDBACK_ONOFF.value: "state_address",
-    ETSCustomAddressType.DIMVALUE.value: "brightness_address",
-    ETSCustomAddressType.FEEDBACK_DIMVALUE.value: "brightness_state_address",
+    ETSCustomAddressType.ONOFF.value: KNXHAProp.ADDRESS.value,
+    ETSCustomAddressType.FEEDBACK_ONOFF.value: KNXHAProp.STATE_ADDRESS.value,
+    ETSCustomAddressType.DIMVALUE.value: KNXHAProp.BRIGHTNESS_ADDRESS.value,
+    ETSCustomAddressType.FEEDBACK_DIMVALUE.value: KNXHAProp.BRIGHTNAESS_STATE_ADDRESS.value,
 }
 
 
@@ -50,14 +59,21 @@ class KNXHeler:
     """Helper functions"""
 
     @staticmethod
-    def check(device: KNXDevice) -> bool:
+    def check_light(device: KNXLight) -> bool:
         """Tells whether the given device is valid"""
-        return "address" in device and "state_address" in device
+        return (
+            KNXHAProp.ADDRESS.value in device
+            and KNXHAProp.STATE_ADDRESS.value in device
+            and not (
+                (KNXHAProp.BRIGHTNESS_ADDRESS.value in device)
+                ^ (KNXHAProp.BRIGHTNAESS_STATE_ADDRESS.value in device)
+            )
+        )
 
     @staticmethod
     def should_ignore(device_name: str) -> bool:
         """Tells whether to process this device or not"""
-        return device_name.startswith(ETSCustomAddressType.DIMMER.value)
+        return device_name.startswith(ETSCustomAddressType.DIMMER_PUSH.value)
 
     @staticmethod
     def parse_name(s: str) -> Tuple[str, Optional[str]]:
@@ -90,8 +106,18 @@ class KNXProject:
         """Tells whether this project includes valid devices"""
         return reduce(
             lambda c, cc: c and cc,
-            [KNXHeler.check(d) for d in self.devices.values()],
+            [KNXHeler.check_light(d) for d in self.devices.values()],
         )  # type: ignore
+
+    def remove_invalid_devices(self) -> List[KNXLight]:
+        """Removes the invalid devices and return the removed items"""
+        invalid: List[KNXLight] = []
+        for d in self.devices.values():
+            if not KNXHeler.check_light(d):
+                invalid.append(d)
+        for inv in invalid:
+            del self.devices[inv["name"]]  # type: ignore
+        return invalid
 
     def _parse_line(self, l: str):
 
@@ -149,15 +175,20 @@ class KNXProject:
             if l != "":
                 _proj._parse_line(l)
 
+        invalid: List[KNXLight] = _proj.remove_invalid_devices()
+        print("Removed devices due to invalid config:")
+        for inv in invalid:
+            print(inv)
+
         return _proj
 
-    def to_yaml(self, root: str, devices_type: str) -> str:
+    def to_yaml(self, devices_type: str, root: Optional[str] = None) -> str:
         """Creates a yaml representation of this project"""
 
         device_names: List[str] = sorted(list(self.devices.keys()))
-        d: dict = {
-            root: {devices_type: [self.devices[n] for n in device_names]}
-        }
+        d: dict = {devices_type: [self.devices[n] for n in device_names]}
+        if root is not None:
+            d = {root: d}
         return yaml.dump(d, indent=2)
 
 
@@ -170,5 +201,5 @@ if __name__ == "__main__":
     p: KNXProject = KNXProject.load_from_ets(file=filename)
 
     with open(file=f"{filename}.yaml", mode="w+", encoding="UTF-8") as fyaml:
-        y = p.to_yaml(root="knx", devices_type="light")
+        y = p.to_yaml(devices_type="light")
         fyaml.write(y)
